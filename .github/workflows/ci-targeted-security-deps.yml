@@ -1,0 +1,93 @@
+name: Generate targeted security dependency candidate
+
+on:
+  push:
+    branches:
+      - ci/finalize-security-deps
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      PHX_CI: true
+    steps:
+      - name: Checkout candidate branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.5.0.2"
+
+      - name: Resolve root Bandit security update only
+        run: mix deps.update bandit
+
+      - name: Resolve integration security updates only
+        working-directory: integration_test
+        run: mix deps.update bandit postgrex phoenix_live_view
+
+      - name: Verify declared dependency file is unchanged
+        run: |
+          mix format --check-formatted integration_test/mix.exs
+          git diff --exit-code -- integration_test/mix.exs
+
+      - name: Fetch complete root graph
+        run: mix deps.get --only test
+
+      - name: Verify root advisory boundary
+        shell: bash
+        run: |
+          set +e
+          mix hex.audit > /tmp/root-audit.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/root-audit.txt
+          test "$status" -ne 0
+          test "$(grep -c 'EEF-CVE-' /tmp/root-audit.txt)" -eq 3
+          grep -q 'cowlib 2.19.0 - EEF-CVE-2026-43969' /tmp/root-audit.txt
+          grep -q 'cowlib 2.19.0 - EEF-CVE-2026-43971' /tmp/root-audit.txt
+          grep -q 'cowlib 2.19.0 - EEF-CVE-2026-43966' /tmp/root-audit.txt
+          ! grep -q 'bandit .*EEF-CVE-' /tmp/root-audit.txt
+
+      - name: Fetch complete integration graph
+        working-directory: integration_test
+        run: mix deps.get
+
+      - name: Require clean integration advisory state
+        working-directory: integration_test
+        run: mix hex.audit
+
+      - name: Verify minimal generated diff
+        shell: bash
+        run: |
+          actual="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' integration_test/mix.lock mix.lock | sort)"
+          printf 'Changed files:\n%s\n' "$actual"
+          test "$actual" = "$expected"
+          grep -q '"bandit": {:hex, :bandit, "1.12.5"' mix.lock
+          grep -q '"bandit": {:hex, :bandit, "1.12.5"' integration_test/mix.lock
+          grep -q '"postgrex": {:hex, :postgrex, "0.22.4"' integration_test/mix.lock
+          grep -q '"phoenix_live_view": {:hex, :phoenix_live_view, "1.2.10"' integration_test/mix.lock
+
+      - name: Commit generated lockfiles
+        id: commit
+        shell: bash
+        run: |
+          if git diff --quiet -- mix.lock integration_test/mix.lock; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mix.lock integration_test/mix.lock
+          git commit -m 'ci: resolve targeted security dependencies'
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Push generated candidate
+        if: steps.commit.outputs.changed == 'true'
+        run: git push origin HEAD:${GITHUB_REF_NAME}
