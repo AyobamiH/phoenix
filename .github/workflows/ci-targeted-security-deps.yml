@@ -48,11 +48,11 @@ jobs:
           set -e
           cat /tmp/root-audit.txt
           test "$status" -ne 0
-          test "$(grep -c 'EEF-CVE-' /tmp/root-audit.txt)" -eq 3
-          grep -q 'cowlib 2.19.0 - EEF-CVE-2026-43969' /tmp/root-audit.txt
-          grep -q 'cowlib 2.19.0 - EEF-CVE-2026-43971' /tmp/root-audit.txt
-          grep -q 'cowlib 2.19.0 - EEF-CVE-2026-43966' /tmp/root-audit.txt
-          ! grep -q 'bandit .*EEF-CVE-' /tmp/root-audit.txt
+          test "$(grep -c '^  cowlib 2.19.0 - EEF-CVE-' /tmp/root-audit.txt)" -eq 3
+          grep -q '^  cowlib 2.19.0 - EEF-CVE-2026-43969' /tmp/root-audit.txt
+          grep -q '^  cowlib 2.19.0 - EEF-CVE-2026-43971' /tmp/root-audit.txt
+          grep -q '^  cowlib 2.19.0 - EEF-CVE-2026-43966' /tmp/root-audit.txt
+          ! grep -q '^  bandit .*EEF-CVE-' /tmp/root-audit.txt
 
       - name: Fetch complete integration graph
         working-directory: integration_test
